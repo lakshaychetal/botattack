@@ -1,0 +1,90 @@
+# ──────────────────────────────────────────────────────────────
+# Shopify COD Order Bot - Configuration
+# ──────────────────────────────────────────────────────────────
+
+# ── Order Settings ────────────────────────────────────────────
+order:
+  quantity: 1                    # Items per order
+  max_orders: 5                  # Total orders to place in a run
+  delay_between_orders:          # Random delay range (seconds)
+    min: 3
+    max: 8
+  retry_attempts: 3              # Retries on failure
+  retry_delay: 2                 # Seconds between retries
+
+# ── Customer Identity Pool ────────────────────────────────────
+# The bot picks randomly from this pool. Add as many as you want.
+# If pool is empty, the bot will auto-generate identities.
+customers: []
+  # - first_name: "Rahul"
+  #   last_name: "Sharma"
+  #   email: "rahul.sharma@gmail.com"
+  #   phone: "9876543210"
+  #   address1: "42 MG Road"
+  #   address2: "Near City Mall"
+  #   city: "Mumbai"
+  #   province: "Maharashtra"
+  #   province_code: "MH"
+  #   zip: "400001"
+  #   country: "India"
+  #   country_code: "IN"
+
+# ── Auto-Generate Settings ────────────────────────────────────
+# Used when customer pool is empty
+auto_generate:
+  country: "India"
+  country_code: "IN"
+  provinces:
+    - name: "Maharashtra"
+      code: "MH"
+      cities: ["Mumbai", "Pune", "Nagpur", "Thane", "Nashik"]
+      zip_range: ["400001", "444999"]
+    - name: "Delhi"
+      code: "DL"
+      cities: ["New Delhi", "Dwarka", "Rohini", "Saket"]
+      zip_range: ["110001", "110099"]
+    - name: "Karnataka"
+      code: "KA"
+      cities: ["Bangalore", "Mysore", "Hubli", "Mangalore"]
+      zip_range: ["560001", "590099"]
+    - name: "Tamil Nadu"
+      code: "TN"
+      cities: ["Chennai", "Coimbatore", "Madurai", "Salem"]
+      zip_range: ["600001", "643999"]
+    - name: "Uttar Pradesh"
+      code: "UP"
+      cities: ["Lucknow", "Noida", "Agra", "Varanasi", "Kanpur"]
+      zip_range: ["201001", "285999"]
+    - name: "Gujarat"
+      code: "GJ"
+      cities: ["Ahmedabad", "Surat", "Vadodara", "Rajkot"]
+      zip_range: ["360001", "396999"]
+    - name: "Rajasthan"
+      code: "RJ"
+      cities: ["Jaipur", "Jodhpur", "Udaipur", "Kota"]
+      zip_range: ["302001", "345999"]
+    - name: "West Bengal"
+      code: "WB"
+      cities: ["Kolkata", "Howrah", "Siliguri", "Durgapur"]
+      zip_range: ["700001", "743999"]
+
+# ── Proxy Settings ────────────────────────────────────────────
+proxy:
+  enabled: false
+  rotation: true                 # Rotate proxy per order
+  list: []
+  file: ""                       # Or load from file: "proxies.txt"
+
+# ── Anti-Detection ────────────────────────────────────────────
+stealth:
+  random_user_agent: true
+  random_delays: true
+  delay_range:                   # Per-request delay (seconds)
+    min: 0.5
+    max: 2.0
+
+# ── Output & Logging ─────────────────────────────────────────
+output:
+  log_file: "logs/bot.log"
+  results_file: "results/orders.csv"
+  verbose: true

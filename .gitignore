@@ -1,0 +1,24 @@
+# .gitignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+.env
+logs/
+results/
+proxies.txt
+*.csv
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
