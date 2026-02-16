@@ -7,13 +7,16 @@ Handles the complete COD order flow through EasySell's API:
 2. Clear cart → Add variant to cart
 3. Fetch cart data (/cart.js)
 4. Generate EasySell client hash
-5. POST order to https://load.tyslo.com/order/new
+5. Compute HMAC-SHA256 discount_key signature
+6. POST order to https://load.tyslo.com/order/new
 
 This replaces the standard Shopify checkout flow for stores
 that use the EasySell COD Form Shopify app.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import math
 import random
@@ -194,6 +197,7 @@ class CheckoutEngine:
                     result.status = OrderStatus.FAILED
                     result.error = f"Failed to add to cart (HTTP {add_resp.status_code})"
                     return result
+                add_data = add_resp.json()
             except Exception as e:
                 result.status = OrderStatus.FAILED
                 result.error = f"Cart add error: {str(e)}"
@@ -204,6 +208,7 @@ class CheckoutEngine:
             await asyncio.sleep(random.uniform(0.2, 0.5))
 
             # ── Step 4: Get cart data ─────────────────────────
+            cart_items = []
             try:
                 cart_resp = await session.get(
                     f"{self.base_url}/cart.js",
@@ -214,17 +219,22 @@ class CheckoutEngine:
                 )
                 cart_data = cart_resp.json()
                 cart_items = cart_data.get("items", [])
-                if not cart_items:
-                    result.status = OrderStatus.FAILED
-                    result.error = "Cart is empty after add"
-                    return result
-            except Exception as e:
+            except Exception:
+                pass
+
+            # Fallback: use the add.js response items if cart.js is empty
+            if not cart_items:
+                cart_items = add_data.get("items", [])
+
+            if not cart_items:
                 result.status = OrderStatus.FAILED
-                result.error = f"Cart fetch error: {str(e)}"
+                result.error = "Cart is empty after add"
                 return result
 
             result.status = OrderStatus.CART_VERIFIED
-            result.total_price = str(cart_data.get("total_price", 0) / 100)
+            # Calculate total from cart items
+            total_paise = sum(item.get("final_line_price", item.get("price", 0)) for item in cart_items)
+            result.total_price = f"{total_paise / 100:.2f}"
 
             # ── Step 5: Generate hash ─────────────────────────
             es_hash = generate_easysell_hash(user_agent)
@@ -319,35 +329,53 @@ class CheckoutEngine:
     ) -> Dict[str, Any]:
         """
         Build the EasySell order payload exactly matching the JS frontend.
+
+        Critical fields discovered by reverse-engineering easysell.js:
+          - shipping: {id, name, price, taxLines} from shippingConfig.customRates
+          - currency: must include 'default' key (= ES_CURRENCY)
+          - cart items: each must have 'taxLines' property
+          - discount_key: HMAC-SHA256(payload_json, ln(hash, shop))
         """
         full_name = f"{customer.first_name} {customer.last_name}"
 
-        return {
+        # Process cart items: add taxLines if missing (EasySell's os() function)
+        processed_cart = []
+        for item in cart_items:
+            if "taxLines" not in item:
+                item["taxLines"] = []
+            processed_cart.append(item)
+
+        # Resolve shipping option from store config
+        shipping = self._get_shipping_option()
+
+        # Build core payload (without discount_key)
+        payload = {
             "hash": es_hash,
             "shop": self.store_info.shop_domain,
             "currency": {
+                "default": self.store_info.currency,
                 "active": self.store_info.currency,
                 "rate": "1.0",
             },
             "data": {
                 "first_name": {
-                    "title": "Full Name",
+                    "title": "First Name",
                     "value": full_name,
                 },
                 "phone": {
-                    "title": "Mobile Number",
+                    "title": "Phone",
                     "value": customer.phone,
                 },
                 "address": {
-                    "title": "Full Address",
+                    "title": "Address",
                     "value": customer.address1,
                 },
                 "address2": {
-                    "title": "Land Mark",
+                    "title": "Address 2",
                     "value": customer.address2,
                 },
                 "zip": {
-                    "title": "PIN code",
+                    "title": "Postal code",
                     "value": customer.zip,
                 },
                 "city": {
@@ -355,12 +383,12 @@ class CheckoutEngine:
                     "value": customer.city,
                 },
                 "province": {
-                    "title": "State",
+                    "title": "Province (State)",
                     "value": customer.province_code,
                 },
             },
-            "cart": cart_items,
-            "shipping": None,
+            "cart": processed_cart,
+            "shipping": shipping,
             "locale": "en",
             "version": "V2",
             "source_url": product_url,
@@ -378,3 +406,38 @@ class CheckoutEngine:
             "pixels": [],
             "is_bundle": False,
         }
+
+        # Compute HMAC-SHA256 discount_key signature
+        # JS: an(JSON.stringify(b), ln(hash, shop))
+        # ln(hash, shop) = hash[:10] + shop + hash[10:]
+        payload_json = json.dumps(payload)
+        hmac_key = es_hash[:10] + self.store_info.shop_domain + es_hash[10:]
+        discount_key = hmac.new(
+            hmac_key.encode("utf-8"),
+            payload_json.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        # Add discount_key to payload body
+        # (when settings.discount_key is falsy, it goes in body; otherwise as X-Discount-Key header)
+        payload["discount_key"] = discount_key
+
+        return payload
+
+    def _get_shipping_option(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the first available shipping rate from store config.
+        EasySell stores define custom shipping rates in shippingConfig.
+        Returns {id, name, price, taxLines} or None.
+        """
+        rates = self.store_info.shipping_rates
+        if rates:
+            rate = rates[0]  # Use first rate (usually free shipping)
+            return {
+                "id": rate.get("id", ""),
+                "name": rate.get("name", "Free Shipping"),
+                "price": rate.get("price", 0),
+                "taxLines": [],
+            }
+        # Fallback: no shipping options configured
+        return None

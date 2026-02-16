@@ -9,7 +9,7 @@ Fetches product data from Shopify stores that use EasySell COD Form.
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from bot.stealth import StealthClient
@@ -54,6 +54,10 @@ class StoreInfo:
     has_easysell: bool = False
     easysell_fields: Dict[str, str] = field(default_factory=dict)
     products: List[Product] = field(default_factory=list)
+    # EasySell shipping config extracted from EASYSELL_CONFIG
+    shipping_rates: List[Dict[str, Any]] = field(default_factory=list)
+    # Raw EASYSELL_CONFIG settings (for fee, cod_gateway, etc.)
+    easysell_settings: Dict[str, Any] = field(default_factory=dict)
 
 
 # ── Scraper ───────────────────────────────────────────────────
@@ -136,6 +140,17 @@ class ShopifyScraper:
         if ctry_match:
             country = ctry_match.group(1)
 
+        # Parse EASYSELL_CONFIG for shipping and settings
+        shipping_rates: List[Dict[str, Any]] = []
+        easysell_settings: Dict[str, Any] = {}
+        es_config = self._parse_easysell_config(html)
+        if es_config:
+            settings = es_config.get("settings", {})
+            easysell_settings = settings
+            sc = settings.get("shippingConfig", {})
+            if sc.get("enabled") and sc.get("customRates"):
+                shipping_rates = sc["customRates"]
+
         return StoreInfo(
             url=base_url,
             domain=domain,
@@ -144,11 +159,54 @@ class ShopifyScraper:
             currency=currency,
             country=country,
             has_easysell=has_easysell,
+            shipping_rates=shipping_rates,
+            easysell_settings=easysell_settings,
         )
 
     # Alias for backward compat
     async def get_store_info(self, store_url: str) -> StoreInfo:
         return await self.get_store_info_from_page(store_url)
+
+    @staticmethod
+    def _parse_easysell_config(html: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse the EASYSELL_CONFIG JSON object from page HTML.
+        Uses brace-depth tracking to find the end of the JSON.
+        """
+        import json
+
+        m = re.search(r'var\s+EASYSELL_CONFIG\s*=\s*', html)
+        if not m:
+            return None
+
+        start = m.end()
+        depth = 0
+        in_string = False
+        escape = False
+
+        for i in range(start, min(start + 30000, len(html))):
+            c = html[i]
+            if escape:
+                escape = False
+                continue
+            if c == '\\' and in_string:
+                escape = True
+                continue
+            if c == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(html[start:i + 1])
+                    except json.JSONDecodeError:
+                        return None
+        return None
 
     async def get_single_product(self, product_url: str) -> Optional[Product]:
         """Fetch a single product by its URL using /products/{handle}.json."""

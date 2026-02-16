@@ -26,6 +26,8 @@ async def place_order():
     print("🏪 Getting store info...")
     store_info = await scraper.get_store_info_from_page(PRODUCT_URL)
     print(f"✅ Shop: {store_info.shop_domain}")
+    print(f"   Shipping rates: {store_info.shipping_rates}")
+    print(f"   COD gateway: {store_info.easysell_settings.get('cod_gateway')}")
 
     # Generate identity but override name
     customer = id_gen.generate()
@@ -73,11 +75,30 @@ async def place_order():
             print(f"   Tracking: {result.status_url}")
         if result.tags:
             print(f"   Tags: {', '.join(result.tags)}")
+
+        # Check if it's a real order or draft
+        raw = result.raw_response or {}
+        order = raw.get("order", {})
+        gql_id = order.get("admin_graphql_api_id", "")
+        fin_status = order.get("financial_status", "unknown")
+        gateway = order.get("gateway", "unknown")
+        payment_gws = order.get("payment_gateway_names", [])
+        print(f"   Financial Status: {fin_status}")
+        print(f"   Gateway: {gateway}")
+        print(f"   Payment Gateways: {payment_gws}")
+        if "DraftOrder" in gql_id:
+            print(f"   ⚠️  WARNING: This is a DraftOrder (GQL ID: {gql_id})")
+        elif "Order" in gql_id:
+            print(f"   ✅ Confirmed: This is a REAL Order (not a draft)")
     else:
         print(f"❌ ORDER FAILED")
         print(f"   Status: {result.status.value}")
         print(f"   Error: {result.error}")
     print("="*60)
+
+
+if __name__ == "__main__":
+    asyncio.run(place_order())
 
 
 asyncio.run(place_order())
