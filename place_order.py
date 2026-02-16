@@ -1,4 +1,4 @@
-"""Place a real order with specific name: Lakshay Chetal"""
+"""Place a real COD order via EasySell."""
 import asyncio
 from bot.config import load_config, CustomerAddress
 from bot.stealth import StealthClient
@@ -26,13 +26,11 @@ async def place_order():
     print("🏪 Getting store info...")
     store_info = await scraper.get_store_info_from_page(PRODUCT_URL)
     print(f"✅ Shop: {store_info.shop_domain}")
-    print(f"   Shipping rates: {store_info.shipping_rates}")
-    print(f"   COD gateway: {store_info.easysell_settings.get('cod_gateway')}")
+    print(f"   Shipping: {store_info.shipping_rates}")
+    print(f"   COD: {store_info.easysell_settings.get('cod_gateway')}")
 
-    # Generate identity but override name
+    # Generate fully random identity
     customer = id_gen.generate()
-    customer.first_name = "Lakshay"
-    customer.last_name = "Chetal"
     
     print(f"\n📦 Order Details:")
     print(f"   Name: {customer.first_name} {customer.last_name}")
@@ -42,7 +40,6 @@ async def place_order():
     print(f"   City: {customer.city}")
     print(f"   State: {customer.province} ({customer.province_code})")
     print(f"   PIN: {customer.zip}")
-    print(f"   Email: {customer.email}")
 
     # Select first variant
     variant = product.variants[0]
@@ -74,22 +71,16 @@ async def place_order():
         if result.status_url:
             print(f"   Tracking: {result.status_url}")
         if result.tags:
-            print(f"   Tags: {', '.join(result.tags)}")
+            print(f"   Tags: {', '.join(result.tags) if isinstance(result.tags, list) else result.tags}")
 
         # Check if it's a real order or draft
         raw = result.raw_response or {}
         order = raw.get("order", {})
         gql_id = order.get("admin_graphql_api_id", "")
-        fin_status = order.get("financial_status", "unknown")
-        gateway = order.get("gateway", "unknown")
-        payment_gws = order.get("payment_gateway_names", [])
-        print(f"   Financial Status: {fin_status}")
-        print(f"   Gateway: {gateway}")
-        print(f"   Payment Gateways: {payment_gws}")
         if "DraftOrder" in gql_id:
-            print(f"   ⚠️  WARNING: This is a DraftOrder (GQL ID: {gql_id})")
+            print(f"   ⚠️  WARNING: DraftOrder ({gql_id})")
         elif "Order" in gql_id:
-            print(f"   ✅ Confirmed: This is a REAL Order (not a draft)")
+            print(f"   ✅ Confirmed: REAL COD Order")
     else:
         print(f"❌ ORDER FAILED")
         print(f"   Status: {result.status.value}")

@@ -258,7 +258,7 @@ class CheckoutEngine:
                         "Origin": self.base_url,
                         "Referer": product_url,
                     },
-                    content=json.dumps(order_payload),
+                    content=json.dumps(order_payload, separators=(",", ":")),
                 )
                 result.status = OrderStatus.SUBMITTED
             except Exception as e:
@@ -333,16 +333,23 @@ class CheckoutEngine:
         Critical fields discovered by reverse-engineering easysell.js:
           - shipping: {id, name, price, taxLines} from shippingConfig.customRates
           - currency: must include 'default' key (= ES_CURRENCY)
-          - cart items: each must have 'taxLines' property
-          - discount_key: HMAC-SHA256(payload_json, ln(hash, shop))
+          - cart items: properties formatted as array, taxLines from Q() (null if no tax)
+          - discount_key: HMAC-SHA256(compact_json, ln(hash, shop))
+          - JSON must use compact format (no spaces) to match JS JSON.stringify()
         """
         full_name = f"{customer.first_name} {customer.last_name}"
 
-        # Process cart items: add taxLines if missing (EasySell's os() function)
+        # Process cart items like EasySell's os() function:
+        #   const {properties: s, ...i} = n;
+        #   return {...i, ...formatProperties(s, is_draft), taxLines: Q(product_id, amount)}
         processed_cart = []
         for item in cart_items:
-            if "taxLines" not in item:
-                item["taxLines"] = []
+            # Destructure properties and re-add as formatted array
+            raw_props = item.pop("properties", {})
+            formatted_props = self._format_properties(raw_props, is_draft=False)
+            item.update(formatted_props)
+            # taxLines: Q() returns null when no product tax data exists
+            item["taxLines"] = None
             processed_cart.append(item)
 
         # Resolve shipping option from store config
@@ -410,7 +417,8 @@ class CheckoutEngine:
         # Compute HMAC-SHA256 discount_key signature
         # JS: an(JSON.stringify(b), ln(hash, shop))
         # ln(hash, shop) = hash[:10] + shop + hash[10:]
-        payload_json = json.dumps(payload)
+        # CRITICAL: Must use compact JSON (no spaces) to match JS JSON.stringify()
+        payload_json = json.dumps(payload, separators=(",", ":"))
         hmac_key = es_hash[:10] + self.store_info.shop_domain + es_hash[10:]
         discount_key = hmac.new(
             hmac_key.encode("utf-8"),
@@ -433,11 +441,35 @@ class CheckoutEngine:
         rates = self.store_info.shipping_rates
         if rates:
             rate = rates[0]  # Use first rate (usually free shipping)
+            # taxLines for shipping: Et(price) in JS, returns null when no tax data
             return {
                 "id": rate.get("id", ""),
                 "name": rate.get("name", "Free Shipping"),
                 "price": rate.get("price", 0),
-                "taxLines": [],
+                "taxLines": None,
             }
         # Fallback: no shipping options configured
+        return None
+
+    @staticmethod
+    def _format_properties(
+        props: Any, is_draft: bool = False
+    ) -> Dict[str, list]:
+        """
+        Replicate EasySell's formatProperties() / W() from helpers.js:
+          W = (e, t) => {
+            const o = t ? "customAttributes" : "properties";
+            const r = t ? "key" : "name";
+            return {[o]: Object.entries(e||{}).filter(...)
+                        .map(([n,a]) => ({[r]: n, value: a.toString()}))};
+          }
+        """
+        key_name = "customAttributes" if is_draft else "properties"
+        attr_key = "key" if is_draft else "name"
+        entries = []
+        if props and isinstance(props, dict):
+            for k, v in props.items():
+                if v is not None and v != "":
+                    entries.append({attr_key: k, "value": str(v)})
+        return {key_name: entries}
         return None
